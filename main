@@ -1,0 +1,85 @@
+# scripts/integrate_main.py
+import cv2
+import time
+from object_detection import load_model, detect_and_annotate
+from lane_detection import detect_lanes
+from emergency_vehicle_detection import check_emergency_in_detections, siren_visual_check
+
+def main(video_source=0, model_path="yolov8s.pt", conf=0.4, show=True, save_output=None):
+    print("[INFO] Loading YOLO model...")
+    model = load_model(model_path)
+
+    cap = cv2.VideoCapture(video_source)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video source: {video_source}")
+
+    writer = None
+    if save_output is not None:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        writer = cv2.VideoWriter(save_output, fourcc, fps, (w,h))
+
+    print("[INFO] Starting processing loop. Press 'q' to quit.")
+    prev = time.time()
+    frame_count = 0
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_count += 1
+
+            # 1) Object detection + annotation
+            annotated, detections = detect_and_annotate(model, frame, conf=conf)
+
+            # 2) Lane detection overlay (draw lanes on annotated)
+            annotated = detect_lanes(annotated, draw=True)
+
+            # 3) Emergency checks (keywords in detected classes)
+            emergency_flag, annotated = check_emergency_in_detections(detections, annotated)
+
+            # 3b) Optional visual siren heuristic (check ROI near detections if no keyword)
+            if not emergency_flag and len(detections) > 0:
+                # check ROI around highest-conf detection
+                top = max(detections, key=lambda d: d["conf"])
+                x1,y1,x2,y2 = top["xyxy"]
+                if siren_visual_check(frame, roi=(x1,y1,x2,y2), threshold=0.30):
+                    cv2.putText(annotated, "Possible Emergency Lights Detected", (30,90),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,0,255), 2)
+                    emergency_flag = True
+
+            # 4) Overlay alerts
+            if emergency_flag:
+                cv2.putText(annotated, "🚨 EMERGENCY VEHICLE DETECTED 🚨", (30,50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 3)
+
+            # 5) FPS display
+            if frame_count % 10 == 0:
+                now = time.time()
+                fps = 10.0 / (now - prev + 1e-8)
+                prev = now
+            cv2.putText(annotated, f"FPS: {fps:.1f}", (30, annotated.shape[0]-30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+
+            if show:
+                cv2.imshow("Smart Automotive AI", annotated)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+            if writer is not None:
+                writer.write(annotated)
+
+    finally:
+        cap.release()
+        if writer is not None:
+            writer.release()
+        cv2.destroyAllWindows()
+        print("[INFO] Finished. Processed frames:", frame_count)
+
+if __name__ == "__main__":
+    # Example usage:
+    #  - webcam: main(0)
+    #  - video file: main("data/test_videos/highway.mp4")
+    main(video_source=0, model_path="yolov8s.pt", conf=0.4, show=True, save_output=None)
