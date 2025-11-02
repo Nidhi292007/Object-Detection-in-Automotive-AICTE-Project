@@ -1,0 +1,48 @@
+# scripts/emergency_vehicle_detection.py
+import cv2
+import numpy as np
+
+EMERGENCY_KEYWORDS = ["ambulance", "fire", "police", "emergency"]
+
+def check_emergency_in_detections(detections, frame=None):
+    """
+    Simple emergency detection by checking detection class names for keywords.
+    detections: list of dicts {name, conf, xyxy}
+    Returns (flag, frame) where flag=True if emergency detected; frame annotated if provided.
+    """
+    flag = False
+    for det in detections:
+        name = det["name"].lower()
+        if any(k in name for k in EMERGENCY_KEYWORDS):
+            flag = True
+            # annotate bounding box if frame is given
+            if frame is not None:
+                x1, y1, x2, y2 = det["xyxy"]
+                cv2.rectangle(frame, (x1,y1), (x2,y2), (0,0,255), 2)
+                cv2.putText(frame, f"EMERGENCY: {det['name']} {det['conf']:.2f}",
+                            (x1, max(30,y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+    return flag, frame
+
+def siren_visual_check(frame, roi=None, threshold=0.35):
+    """
+    (Optional) Simple heuristic to detect flashing red/blue lights:
+    - roi: region to analyze (x1,y1,x2,y2). If None, checks entire frame.
+    - returns True if high proportion of saturated red/blue pixels appear (heuristic).
+    NOTE: This is a weak heuristic and can be noisy; fine-tune or use audio-based siren detection.
+    """
+    img = frame if roi is None else frame[roi[1]:roi[3], roi[0]:roi[2]]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # red mask (two ranges)
+    lower_red1 = np.array([0,120,120]); upper_red1 = np.array([10,255,255])
+    lower_red2 = np.array([160,120,120]); upper_red2 = np.array([180,255,255])
+    mask_r1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask_r2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask_red = cv2.bitwise_or(mask_r1, mask_r2)
+
+    # blue mask
+    lower_blue = np.array([90,80,60]); upper_blue = np.array([130,255,255])
+    mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
+
+    mask = cv2.bitwise_or(mask_red, mask_blue)
+    proportion = (np.count_nonzero(mask) / (mask.size + 1e-8))
+    return proportion > threshold
