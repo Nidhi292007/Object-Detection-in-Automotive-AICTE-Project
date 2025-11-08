@@ -1,0 +1,34 @@
+import cv2
+from ultralytics import YOLO
+from scripts.lane_detection import detect_lanes
+from scripts.emergency_vehicle_detection import detect_emergency_vehicle
+
+def main(video_source=0):
+    model = YOLO("yolov8n.pt")  # YOLOv8 small model
+    cap = cv2.VideoCapture(video_source)
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Lane Detection
+        lane_frame = detect_lanes(frame)
+
+        # Emergency Vehicle Detection
+        ev_frame, emergency_detected = detect_emergency_vehicle(lane_frame, model)
+
+        if emergency_detected:
+            cv2.putText(ev_frame, "⚠ Give Way to Emergency Vehicle!", (50, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+        cv2.imshow("Smart Automotive Detection", ev_frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main("data/test_videos/highway.mp4")
